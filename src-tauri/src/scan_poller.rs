@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::discovery::DiscoveredScanner;
-use crate::scanner::{scan_escl, ScanJob};
+use crate::scanner::{scan_escl_with_tls, ScanJob};
 
 /// Pending Scan-Job von DocFlow
 #[derive(Debug, Deserialize, Clone)]
@@ -106,7 +106,7 @@ impl ScanPoller {
             duplex: job.duplex,
         };
 
-        let result = scan_escl(&scanner.ip, scanner.port, &scan_job).await?;
+        let result = scan_escl_with_tls(&scanner.ip, scanner.port, scanner.use_tls, &scan_job).await?;
 
         if result.pages.is_empty() {
             return Err("Keine Seiten gescannt".into());

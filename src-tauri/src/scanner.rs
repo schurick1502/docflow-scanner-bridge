@@ -37,8 +37,32 @@ pub async fn scan_escl(
     scanner_port: u16,
     job: &ScanJob,
 ) -> Result<ScanResult, Box<dyn std::error::Error + Send + Sync>> {
-    let client = reqwest::Client::new();
-    let base_url = format!("http://{}:{}/eSCL", scanner_ip, scanner_port);
+    scan_escl_with_tls(scanner_ip, scanner_port, false, job).await
+}
+
+/// Führt Scan auf Netzwerk-Scanner via eSCL aus (mit optionalem TLS)
+pub async fn scan_escl_with_tls(
+    scanner_ip: &str,
+    scanner_port: u16,
+    use_tls: bool,
+    job: &ScanJob,
+) -> Result<ScanResult, Box<dyn std::error::Error + Send + Sync>> {
+    // HTTPS für TLS oder Port 443, selbstsignierte Zertifikate akzeptieren
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    let scheme = if use_tls || scanner_port == 443 { "https" } else { "http" };
+
+    // IPv6-Adressen brauchen Brackets in URLs
+    let host = if scanner_ip.contains(':') {
+        format!("[{}]", scanner_ip)
+    } else {
+        scanner_ip.to_string()
+    };
+
+    let base_url = format!("{}://{}:{}/eSCL", scheme, host, scanner_port);
 
     // 1. Scan-Job erstellen
     let scan_settings = format!(

@@ -17,6 +17,7 @@ pub struct DiscoveredScanner {
     pub model: String,
     pub ip: String,
     pub port: u16,
+    pub use_tls: bool,
     pub protocols: Vec<String>,
     pub capabilities: ScannerCapabilities,
     pub discovery_method: String,
@@ -33,11 +34,11 @@ pub struct ScannerCapabilities {
     pub formats: Vec<String>,
 }
 
-/// Service-Typen für mDNS Discovery
+/// Service-Typen für mDNS Discovery (Reihenfolge = Priorität: eSCL bevorzugt über IPP)
 const MDNS_SERVICE_TYPES: &[&str] = &[
-    "_uscan._tcp.local.",   // eSCL Scanner (HTTP)
+    "_uscan._tcp.local.",   // eSCL Scanner (HTTP) — höchste Priorität
     "_uscans._tcp.local.",  // eSCL Scanner (HTTPS)
-    "_ipp._tcp.local.",     // IPP Printer/Scanner
+    "_ipp._tcp.local.",     // IPP Printer/Scanner — nur als Fallback
     "_scanner._tcp.local.", // Generic Scanner
 ];
 
@@ -67,10 +68,14 @@ pub async fn discover_all() -> Result<Vec<DiscoveredScanner>, Box<dyn std::error
 /// mDNS/Bonjour Discovery für eSCL-Scanner
 async fn discover_mdns() -> Result<Vec<DiscoveredScanner>, Box<dyn std::error::Error + Send + Sync>> {
     let mdns = ServiceDaemon::new()?;
-    let mut scanners = HashMap::new();
+    let mut scanners: HashMap<String, DiscoveredScanner> = HashMap::new();
+    // Merken welche Scanner via eSCL (nicht IPP) gefunden wurden
+    let mut escl_ips: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Receiver für alle Service-Typen
     for service_type in MDNS_SERVICE_TYPES {
+        let is_escl = service_type.starts_with("_uscan");
+        let is_escl_tls = *service_type == "_uscans._tcp.local.";
         let receiver = mdns.browse(service_type)?;
 
         // 5 Sekunden Discovery-Zeit
@@ -79,8 +84,19 @@ async fn discover_mdns() -> Result<Vec<DiscoveredScanner>, Box<dyn std::error::E
                 match receiver.recv_async().await {
                     Ok(event) => {
                         if let ServiceEvent::ServiceResolved(info) = event {
-                            if let Some(scanner) = parse_mdns_service(&info) {
-                                scanners.insert(scanner.ip.clone(), scanner);
+                            if let Some(mut scanner) = parse_mdns_service(&info) {
+                                if is_escl_tls {
+                                    scanner.use_tls = true;
+                                }
+                                let ip = scanner.ip.clone();
+                                if is_escl {
+                                    // eSCL-Fund: immer eintragen
+                                    escl_ips.insert(ip.clone());
+                                    scanners.insert(ip, scanner);
+                                } else if !escl_ips.contains(&ip) {
+                                    // IPP/Generic: nur eintragen wenn kein eSCL-Fund für diese IP
+                                    scanners.insert(ip, scanner);
+                                }
                             }
                         }
                     }
@@ -138,6 +154,7 @@ fn parse_mdns_service(info: &mdns_sd::ServiceInfo) -> Option<DiscoveredScanner> 
         model,
         ip,
         port,
+        use_tls: false, // Wird ggf. vom Caller auf true gesetzt (_uscans._tcp)
         protocols: vec!["escl".to_string()],
         capabilities: ScannerCapabilities {
             duplex,
@@ -209,6 +226,7 @@ async fn probe_escl_endpoint(ip: &str, port: u16) -> Option<DiscoveredScanner> {
                 model: format!("eSCL Scanner ({})", ip),
                 ip: ip.to_string(),
                 port,
+                use_tls: port == 443,
                 protocols: vec!["escl".to_string()],
                 capabilities: ScannerCapabilities::default(),
                 discovery_method: "ip_scan".to_string(),
