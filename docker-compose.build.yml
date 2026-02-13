@@ -1,0 +1,28 @@
+# Docker Compose für Scanner Bridge Build
+# Baut die Desktop-App für verschiedene Plattformen
+
+services:
+  # Linux Build (AppImage + .deb)
+  build-linux:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: linux-builder
+    volumes:
+      - ./dist:/output
+    command: >
+      sh -c "
+        mkdir -p /output/linux &&
+        cp -r /app/src-tauri/target/release/bundle/appimage/*.AppImage /output/linux/ 2>/dev/null || true &&
+        cp -r /app/src-tauri/target/release/bundle/deb/*.deb /output/linux/ 2>/dev/null || true &&
+        echo 'Linux Build fertig! Dateien in ./dist/linux/'
+      "
+
+  # Nur Frontend bauen (für Tests)
+  build-frontend:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: sh -c "npm ci && npm run build"

@@ -1,0 +1,54 @@
+[package]
+name = "docflow-scanner-bridge"
+version = "1.0.0"
+description = "DocFlow Scanner Bridge - Verbindet lokale Scanner mit DocFlow"
+authors = ["OneMillion Digital UG"]
+license = "MIT"
+repository = "https://github.com/schurick1502/docflow-scanner-bridge"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2.0"
+tauri-plugin-notification = "2.0"
+tauri-plugin-updater = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"] }
+mdns-sd = "0.11"
+uuid = { version = "1.0", features = ["v4"] }
+local-ip-address = "0.6"
+futures = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+keyring = "2.0"  # Sichere Speicherung von API-Keys
+base64 = "0.22"  # Base64 Encoding für Scan-Daten
+hostname = "0.4"  # Hostname ermitteln
+
+# Plattform-spezifische Scanner-Zugriffe
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.56", features = [
+    "Win32_Devices_ImageAcquisition",
+    "Win32_Foundation",
+    "Win32_System_Com"
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# SANE bindings für Linux (optional, placeholder)
+# sane-scan = "0.1"  # Auskommentiert - wird bei Bedarf aktiviert
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# ImageCaptureCore via objc2 (optional, placeholder)
+# objc2 = "0.5"  # Auskommentiert - wird bei Bedarf aktiviert
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

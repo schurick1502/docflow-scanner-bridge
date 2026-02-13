@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+target/
+
+# Tauri
+src-tauri/target/
+src-tauri/WixTools/
+src-tauri/NSIS/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Debug
+debug/
+
+# Signing keys (NEVER commit!)
+*.tauri-private.key
+*.tauri-private.key.pub
