@@ -242,10 +242,17 @@ async fn disconnect(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String
 async fn check_for_updates(app: tauri::AppHandle) {
     use tauri_plugin_updater::UpdaterExt;
 
-    match app.updater().check().await {
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("Updater konnte nicht initialisiert werden: {}", e);
+            return;
+        }
+    };
+
+    match updater.check().await {
         Ok(Some(update)) => {
             println!("Update verfügbar: v{}", update.version);
-            // Dialog wird automatisch durch "dialog: true" in tauri.conf.json angezeigt
             if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
                 eprintln!("Update-Installation fehlgeschlagen: {}", e);
             }
