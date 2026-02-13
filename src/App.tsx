@@ -29,7 +29,10 @@ function App() {
   const [status, setStatus] = useState<BridgeStatus | null>(null);
   const [scanners, setScanners] = useState<Scanner[]>([]);
   const [pairingCode, setPairingCode] = useState('');
-  const [docflowUrl, setDocflowUrl] = useState('http://localhost:4000');
+  const [docflowUrl, setDocflowUrl] = useState(() => {
+    // Letzte erfolgreiche URL aus localStorage laden
+    return localStorage.getItem('docflow-bridge-url') || '';
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -84,6 +87,10 @@ function App() {
         pairingCode: pairingCode.trim(),
         docflowUrl: isManualCode ? docflowUrl.trim() : null
       });
+      // URL fuer naechsten Start speichern
+      if (docflowUrl.trim()) {
+        localStorage.setItem('docflow-bridge-url', docflowUrl.trim());
+      }
       await loadStatus();
       setView('status');
       setPairingCode('');
@@ -293,7 +300,7 @@ function App() {
                       type="text"
                       value={docflowUrl}
                       onChange={(e) => setDocflowUrl(e.target.value)}
-                      placeholder="http://localhost:4000"
+                      placeholder="https://docflow.example.de"
                       className="pairing-input"
                     />
                     <span className="input-hint">
