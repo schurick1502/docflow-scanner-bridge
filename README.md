@@ -11,7 +11,8 @@ Desktop-Anwendung zur Verbindung lokaler Netzwerk-Scanner mit [DocFlow](https://
 
 1. [DocFlow-Scanner-Bridge.msi herunterladen](https://github.com/schurick1502/docflow-scanner-bridge/releases/latest)
 2. Doppelklick auf die .msi-Datei
-3. Installation abschliessen — die Bridge startet automatisch im System Tray
+3. Falls Windows SmartScreen eine Warnung zeigt: auf **"Weitere Informationen"** und dann **"Trotzdem ausfuehren"** klicken (die App ist sicher, aber noch nicht mit einem EV-Zertifikat signiert)
+4. Installation abschliessen — die Bridge startet automatisch im System Tray
 
 ### macOS
 
