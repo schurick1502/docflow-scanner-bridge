@@ -106,7 +106,7 @@ impl ScanPoller {
             duplex: job.duplex,
         };
 
-        let result = scan_escl_with_tls(&scanner.ip, scanner.port, scanner.use_tls, &scan_job).await?;
+        let result = scan_escl_with_tls(&scanner.ip, scanner.port, scanner.use_tls, &scanner.rs_path, &scan_job).await?;
 
         if result.pages.is_empty() {
             return Err("Keine Seiten gescannt".into());

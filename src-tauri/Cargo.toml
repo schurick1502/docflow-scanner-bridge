@@ -1,6 +1,6 @@
 [package]
 name = "docflow-scanner-bridge"
-version = "1.3.0"
+version = "1.4.0"
 description = "DocFlow Scanner Bridge - Verbindet lokale Scanner mit DocFlow"
 authors = ["OneMillion Digital UG"]
 license = "MIT"

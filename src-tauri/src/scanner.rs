@@ -37,7 +37,7 @@ pub async fn scan_escl(
     scanner_port: u16,
     job: &ScanJob,
 ) -> Result<ScanResult, Box<dyn std::error::Error + Send + Sync>> {
-    scan_escl_with_tls(scanner_ip, scanner_port, false, job).await
+    scan_escl_with_tls(scanner_ip, scanner_port, false, "eSCL", job).await
 }
 
 /// Führt Scan auf Netzwerk-Scanner via eSCL aus (mit optionalem TLS)
@@ -45,6 +45,7 @@ pub async fn scan_escl_with_tls(
     scanner_ip: &str,
     scanner_port: u16,
     use_tls: bool,
+    rs_path: &str,
     job: &ScanJob,
 ) -> Result<ScanResult, Box<dyn std::error::Error + Send + Sync>> {
     // HTTPS für TLS oder Port 443, selbstsignierte Zertifikate akzeptieren
@@ -62,7 +63,10 @@ pub async fn scan_escl_with_tls(
         scanner_ip.to_string()
     };
 
-    let base_url = format!("{}://{}:{}/eSCL", scheme, host, scanner_port);
+    // Resource Path aus mDNS TXT "rs" Record (z.B. "eSCL", "eSCL2")
+    let rs = if rs_path.is_empty() { "eSCL" } else { rs_path };
+    let base_url = format!("{}://{}:{}/{}", scheme, host, scanner_port, rs);
+    println!("🔗 eSCL Base-URL: {}", base_url);
 
     // 1. Scan-Job erstellen
     let scan_settings = format!(
@@ -94,32 +98,43 @@ pub async fn scan_escl_with_tls(
     );
 
     // Vor dem Scan: Scanner-Status prüfen und ggf. alte Jobs aufräumen
-    println!("🔍 Prüfe Scanner-Status...");
-    if let Ok(status_resp) = client.get(format!("{}/ScannerStatus", base_url)).send().await {
-        if let Ok(status_xml) = status_resp.text().await {
-            println!("📋 Scanner-Status: {}",
-                if status_xml.contains("Idle") { "Idle" }
-                else if status_xml.contains("Processing") { "Processing" }
-                else if status_xml.contains("Testing") { "Testing" }
-                else { "Unbekannt" }
-            );
+    println!("🔍 Prüfe Scanner-Status bei {}...", base_url);
+    match client.get(format!("{}/ScannerStatus", base_url)).send().await {
+        Ok(status_resp) => {
+            let status_code = status_resp.status();
+            println!("📋 ScannerStatus HTTP {}", status_code);
+            if let Ok(status_xml) = status_resp.text().await {
+                // Erste 500 Zeichen loggen für Debugging
+                let preview: String = status_xml.chars().take(500).collect();
+                println!("📋 ScannerStatus Response:\n{}", preview);
 
-            // Bestehende Jobs aus ScannerStatus extrahieren und löschen
-            // eSCL gibt JobInfo-Elemente mit JobUri zurück
-            for line in status_xml.lines() {
-                if line.contains("JobUri") || line.contains("jobUri") {
-                    // JobUri extrahieren: <scan:JobUri>/eSCL/ScanJobs/42</scan:JobUri>
-                    if let Some(start) = line.find("/eSCL/") {
-                        let uri_part = &line[start..];
-                        if let Some(end) = uri_part.find('<') {
-                            let job_path = &uri_part[..end];
-                            let delete_url = format!("{}://{}{}", scheme, host, job_path);
-                            println!("🗑 Lösche hängenden Job: {}", job_path);
-                            let _ = client.delete(&delete_url).send().await;
+                let state = if status_xml.contains("Idle") { "Idle" }
+                    else if status_xml.contains("Processing") { "Processing" }
+                    else if status_xml.contains("Testing") { "Testing" }
+                    else { "Unbekannt" };
+                println!("📋 Scanner-State: {}", state);
+
+                // Bestehende Jobs aus ScannerStatus extrahieren und löschen
+                let rs_prefix = format!("/{}/", rs);
+                for line in status_xml.lines() {
+                    if line.contains("JobUri") || line.contains("jobUri") {
+                        // JobUri extrahieren — suche nach dem rs_path Prefix
+                        if let Some(start) = line.find(&rs_prefix).or_else(|| line.find("/eSCL/")) {
+                            let uri_part = &line[start..];
+                            if let Some(end) = uri_part.find('<') {
+                                let job_path = &uri_part[..end];
+                                let delete_url = format!("{}://{}:{}{}", scheme, host, scanner_port, job_path);
+                                println!("🗑 Lösche hängenden Job: {}", delete_url);
+                                let del_resp = client.delete(&delete_url).send().await;
+                                println!("🗑 DELETE Response: {:?}", del_resp.map(|r| r.status()));
+                            }
                         }
                     }
                 }
             }
+        }
+        Err(e) => {
+            println!("⚠ ScannerStatus fehlgeschlagen: {}", e);
         }
     }
 

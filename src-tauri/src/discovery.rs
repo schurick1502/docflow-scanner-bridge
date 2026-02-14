@@ -21,6 +21,13 @@ pub struct DiscoveredScanner {
     pub protocols: Vec<String>,
     pub capabilities: ScannerCapabilities,
     pub discovery_method: String,
+    /// eSCL Resource Path aus mDNS TXT-Record "rs" (z.B. "eSCL", "eSCL2")
+    #[serde(default = "default_rs_path")]
+    pub rs_path: String,
+}
+
+fn default_rs_path() -> String {
+    "eSCL".to_string()
 }
 
 /// Scanner-Fähigkeiten
@@ -188,6 +195,18 @@ fn parse_mdns_service(info: &mdns_sd::ServiceInfo) -> Option<DiscoveredScanner> 
     let adf = input_sources.contains("adf") || input_sources.contains("feeder");
     let flatbed = input_sources.contains("platen") || input_sources.is_empty();
 
+    // eSCL Resource Path (z.B. "eSCL", "eSCL2") — kritisch für korrekte URL
+    let rs_path = properties
+        .get("rs")
+        .map(|v| {
+            let val = v.val_str().to_string();
+            // Führende Slashes entfernen
+            val.trim_start_matches('/').to_string()
+        })
+        .unwrap_or_else(|| "eSCL".to_string());
+
+    println!("📡 Scanner entdeckt: {} @ {}:{} rs={}", model, ip, port, rs_path);
+
     Some(DiscoveredScanner {
         id: uuid,
         name: model.clone(),
@@ -206,6 +225,7 @@ fn parse_mdns_service(info: &mdns_sd::ServiceInfo) -> Option<DiscoveredScanner> 
             formats: vec!["application/pdf".to_string(), "image/jpeg".to_string()],
         },
         discovery_method: "mdns".to_string(),
+        rs_path,
     })
 }
 
