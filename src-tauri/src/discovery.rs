@@ -291,6 +291,7 @@ async fn probe_escl_endpoint(ip: &str, port: u16) -> Option<DiscoveredScanner> {
                 protocols: vec!["escl".to_string()],
                 capabilities: ScannerCapabilities::default(),
                 discovery_method: "ip_scan".to_string(),
+                rs_path: "eSCL".to_string(),
             });
         }
     }
