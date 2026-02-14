@@ -93,25 +93,54 @@ pub async fn scan_escl_with_tls(
         job.format
     );
 
-    // Scan-Job erstellen mit Retry bei 409 Conflict (Scanner busy)
-    let mut job_url = String::new();
-    let max_retries = 5;
+    // Vor dem Scan: Scanner-Status prüfen und ggf. alte Jobs aufräumen
+    println!("🔍 Prüfe Scanner-Status...");
+    if let Ok(status_resp) = client.get(format!("{}/ScannerStatus", base_url)).send().await {
+        if let Ok(status_xml) = status_resp.text().await {
+            println!("📋 Scanner-Status: {}",
+                if status_xml.contains("Idle") { "Idle" }
+                else if status_xml.contains("Processing") { "Processing" }
+                else if status_xml.contains("Testing") { "Testing" }
+                else { "Unbekannt" }
+            );
 
-    for attempt in 0..max_retries {
-        // Bei Retry: Prüfen ob Scanner bereit ist
-        if attempt > 0 {
-            println!("⏳ Scanner busy (409), Versuch {}/{}...", attempt + 1, max_retries);
-            let wait_secs = std::cmp::min(2u64.pow(attempt as u32), 10);
-            tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
-
-            // Scanner-Status prüfen, ggf. alten Job löschen
-            if let Ok(status_resp) = client.get(format!("{}/ScannerStatus", base_url)).send().await {
-                if let Ok(status_xml) = status_resp.text().await {
-                    // Wenn Scanner idle ist, alten Job könnte noch hängen
-                    if status_xml.contains("Idle") || status_xml.contains("idle") {
-                        println!("✓ Scanner ist idle, versuche erneut...");
+            // Bestehende Jobs aus ScannerStatus extrahieren und löschen
+            // eSCL gibt JobInfo-Elemente mit JobUri zurück
+            for line in status_xml.lines() {
+                if line.contains("JobUri") || line.contains("jobUri") {
+                    // JobUri extrahieren: <scan:JobUri>/eSCL/ScanJobs/42</scan:JobUri>
+                    if let Some(start) = line.find("/eSCL/") {
+                        let uri_part = &line[start..];
+                        if let Some(end) = uri_part.find('<') {
+                            let job_path = &uri_part[..end];
+                            let delete_url = format!("{}://{}{}", scheme, host, job_path);
+                            println!("🗑 Lösche hängenden Job: {}", job_path);
+                            let _ = client.delete(&delete_url).send().await;
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    // Scan-Job erstellen mit Retry bei 409 Conflict (Scanner busy)
+    let mut job_url = String::new();
+    let max_retries = 4;
+
+    for attempt in 0..max_retries {
+        if attempt > 0 {
+            println!("⏳ Scanner busy (409), Versuch {}/{}...", attempt + 1, max_retries);
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+            // Bei 2. Retry: Aggressiv alle Jobs löschen die wir finden können
+            if attempt >= 2 {
+                println!("🔄 Versuche alle bestehenden Scan-Jobs zu löschen...");
+                // Typische Job-IDs sind aufsteigend: versuche 1-20 zu löschen
+                for job_num in 1..=20 {
+                    let del_url = format!("{}/ScanJobs/{}", base_url, job_num);
+                    let _ = client.delete(&del_url).send().await;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
         }
 
@@ -125,16 +154,15 @@ pub async fn scan_escl_with_tls(
         let status = response.status();
 
         if status.is_success() {
-            // Job-URL aus Location-Header
             job_url = response
                 .headers()
                 .get("Location")
                 .and_then(|v| v.to_str().ok())
                 .ok_or("Keine Job-URL erhalten")?
                 .to_string();
+            println!("✓ Scan-Job erstellt: {}", job_url);
             break;
         } else if status.as_u16() == 409 && attempt < max_retries - 1 {
-            // 409 Conflict = Scanner busy, retry
             continue;
         } else {
             return Err(format!("Scan-Job erstellen fehlgeschlagen: {}", status).into());
@@ -142,7 +170,7 @@ pub async fn scan_escl_with_tls(
     }
 
     if job_url.is_empty() {
-        return Err("Scanner dauerhaft busy (409 Conflict nach max. Retries)".into());
+        return Err("Scanner dauerhaft busy (409 Conflict) — bitte Scanner neu starten oder Display prüfen".into());
     }
 
     // 2. Auf Scan-Ergebnis warten
