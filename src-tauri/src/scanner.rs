@@ -91,7 +91,12 @@ pub async fn scan_escl_with_tls(
     <pwg:DocumentFormat>{}</pwg:DocumentFormat>
 </scan:ScanSettings>"#,
         if job.source == "adf" { "Feeder" } else { "Platen" },
-        job.color_mode,
+        // Frontend sendet "color"/"grayscale", eSCL erwartet "RGB24"/"Grayscale8"
+        match job.color_mode.to_lowercase().as_str() {
+            "color" | "rgb24" | "rgb" => "RGB24",
+            "grayscale" | "grayscale8" | "gray" | "bw" => "Grayscale8",
+            _ => "RGB24",  // Fallback
+        },
         job.resolution,
         job.resolution,
         job.format
