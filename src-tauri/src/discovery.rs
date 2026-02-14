@@ -38,7 +38,6 @@ pub struct ScannerCapabilities {
 const MDNS_SERVICE_TYPES: &[&str] = &[
     "_uscan._tcp.local.",   // eSCL Scanner (HTTP) — höchste Priorität
     "_uscans._tcp.local.",  // eSCL Scanner (HTTPS)
-    "_ipp._tcp.local.",     // IPP Printer/Scanner — nur als Fallback
     "_scanner._tcp.local.", // Generic Scanner
 ];
 
@@ -92,10 +91,21 @@ async fn discover_mdns() -> Result<Vec<DiscoveredScanner>, Box<dyn std::error::E
                                 if is_escl {
                                     // eSCL-Fund: immer eintragen
                                     escl_ips.insert(ip.clone());
-                                    scanners.insert(ip, scanner);
-                                } else if !escl_ips.contains(&ip) {
-                                    // IPP/Generic: nur eintragen wenn kein eSCL-Fund für diese IP
-                                    scanners.insert(ip, scanner);
+                                } else if escl_ips.contains(&ip) {
+                                    // Generic nur verwenden, wenn kein eSCL-Fund für diese IP existiert
+                                    continue;
+                                }
+
+                                let key = scanner.id.clone();
+                                match scanners.get(&key) {
+                                    Some(existing) => {
+                                        if prefer_scanner(&scanner, existing) {
+                                            scanners.insert(key, scanner);
+                                        }
+                                    }
+                                    None => {
+                                        scanners.insert(key, scanner);
+                                    }
                                 }
                             }
                         }
@@ -110,6 +120,37 @@ async fn discover_mdns() -> Result<Vec<DiscoveredScanner>, Box<dyn std::error::E
 
     mdns.shutdown()?;
     Ok(scanners.into_values().collect())
+}
+
+/// Bevorzugt stabilere/scan-fähigere Scanner-Endpoints
+fn prefer_scanner(candidate: &DiscoveredScanner, current: &DiscoveredScanner) -> bool {
+    score_scanner(candidate) > score_scanner(current)
+}
+
+fn score_scanner(scanner: &DiscoveredScanner) -> i32 {
+    let mut score = 0;
+
+    // TLS bevorzugen
+    if scanner.use_tls {
+        score += 20;
+    }
+
+    // Port-Priorität: 443 > 80 > 8080 > sonst
+    score += match scanner.port {
+        443 => 15,
+        80 => 10,
+        8080 => 5,
+        _ => 0,
+    };
+
+    // IPv4 leicht bevorzugen, IPv6 link-local leicht abwerten
+    if !scanner.ip.contains(':') {
+        score += 3;
+    } else if scanner.ip.to_lowercase().starts_with("fe80:") {
+        score -= 3;
+    }
+
+    score
 }
 
 /// Parst mDNS ServiceInfo zu DiscoveredScanner
