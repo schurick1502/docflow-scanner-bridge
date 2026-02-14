@@ -129,6 +129,34 @@ async fn discover_mdns() -> Result<Vec<DiscoveredScanner>, Box<dyn std::error::E
     Ok(scanners.into_values().collect())
 }
 
+/// Wählt die beste IP-Adresse aus einer mDNS-Adressliste:
+/// IPv4 > ULA IPv6 (fd/fc) > Global IPv6 > Link-Local IPv6
+fn pick_best_address(addresses: &[&IpAddr]) -> String {
+    // 1. Priorität: IPv4
+    if let Some(addr) = addresses.iter().find(|a| a.is_ipv4()) {
+        return addr.to_string();
+    }
+
+    // 2. Priorität: ULA IPv6 (fd00::/8, fc00::/8) — immer lokal erreichbar
+    if let Some(addr) = addresses.iter().find(|a| {
+        let s = a.to_string().to_lowercase();
+        s.starts_with("fd") || s.starts_with("fc")
+    }) {
+        return addr.to_string();
+    }
+
+    // 3. Priorität: Jede nicht-link-local IPv6
+    if let Some(addr) = addresses.iter().find(|a| {
+        let s = a.to_string().to_lowercase();
+        a.is_ipv6() && !s.starts_with("fe80")
+    }) {
+        return addr.to_string();
+    }
+
+    // 4. Fallback: Erste Adresse
+    addresses[0].to_string()
+}
+
 /// Bevorzugt stabilere/scan-fähigere Scanner-Endpoints
 fn prefer_scanner(candidate: &DiscoveredScanner, current: &DiscoveredScanner) -> bool {
     score_scanner(candidate) > score_scanner(current)
@@ -150,11 +178,18 @@ fn score_scanner(scanner: &DiscoveredScanner) -> i32 {
         _ => 0,
     };
 
-    // IPv4 leicht bevorzugen, IPv6 link-local leicht abwerten
+    // IPv4 stark bevorzugen, ULA IPv6 okay, öffentlich/link-local abwerten
     if !scanner.ip.contains(':') {
-        score += 3;
-    } else if scanner.ip.to_lowercase().starts_with("fe80:") {
-        score -= 3;
+        score += 10;  // IPv4 — immer lokal erreichbar
+    } else {
+        let ip_lower = scanner.ip.to_lowercase();
+        if ip_lower.starts_with("fd") || ip_lower.starts_with("fc") {
+            score += 5;  // ULA — lokal erreichbar
+        } else if ip_lower.starts_with("fe80:") {
+            score -= 5;  // Link-local — oft problematisch (Scope-ID nötig)
+        } else {
+            score -= 3;  // Öffentliche IPv6 — vom LAN evtl. nicht erreichbar!
+        }
     }
 
     score
@@ -163,7 +198,16 @@ fn score_scanner(scanner: &DiscoveredScanner) -> i32 {
 /// Parst mDNS ServiceInfo zu DiscoveredScanner
 fn parse_mdns_service(info: &mdns_sd::ServiceInfo) -> Option<DiscoveredScanner> {
     let addresses: Vec<_> = info.get_addresses().iter().collect();
-    let ip = addresses.first()?.to_string();
+    if addresses.is_empty() {
+        return None;
+    }
+
+    // Beste IP-Adresse wählen: IPv4 > ULA IPv6 > Link-Local IPv6 > Public IPv6
+    let ip = pick_best_address(&addresses);
+    println!("📡 mDNS Adressen für {}: {:?} → gewählt: {}",
+        info.get_fullname(),
+        addresses.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+        ip);
     let port = info.get_port();
 
     // TXT-Records parsen
