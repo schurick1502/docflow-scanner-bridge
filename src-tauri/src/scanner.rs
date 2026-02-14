@@ -93,24 +93,57 @@ pub async fn scan_escl_with_tls(
         job.format
     );
 
-    let response = client
-        .post(format!("{}/ScanJobs", base_url))
-        .header("Content-Type", "application/xml")
-        .body(scan_settings)
-        .send()
-        .await?;
+    // Scan-Job erstellen mit Retry bei 409 Conflict (Scanner busy)
+    let mut job_url = String::new();
+    let max_retries = 5;
 
-    if !response.status().is_success() {
-        return Err(format!("Scan-Job erstellen fehlgeschlagen: {}", response.status()).into());
+    for attempt in 0..max_retries {
+        // Bei Retry: Prüfen ob Scanner bereit ist
+        if attempt > 0 {
+            println!("⏳ Scanner busy (409), Versuch {}/{}...", attempt + 1, max_retries);
+            let wait_secs = std::cmp::min(2u64.pow(attempt as u32), 10);
+            tokio::time::sleep(tokio::time::Duration::from_secs(wait_secs)).await;
+
+            // Scanner-Status prüfen, ggf. alten Job löschen
+            if let Ok(status_resp) = client.get(format!("{}/ScannerStatus", base_url)).send().await {
+                if let Ok(status_xml) = status_resp.text().await {
+                    // Wenn Scanner idle ist, alten Job könnte noch hängen
+                    if status_xml.contains("Idle") || status_xml.contains("idle") {
+                        println!("✓ Scanner ist idle, versuche erneut...");
+                    }
+                }
+            }
+        }
+
+        let response = client
+            .post(format!("{}/ScanJobs", base_url))
+            .header("Content-Type", "application/xml")
+            .body(scan_settings.clone())
+            .send()
+            .await?;
+
+        let status = response.status();
+
+        if status.is_success() {
+            // Job-URL aus Location-Header
+            job_url = response
+                .headers()
+                .get("Location")
+                .and_then(|v| v.to_str().ok())
+                .ok_or("Keine Job-URL erhalten")?
+                .to_string();
+            break;
+        } else if status.as_u16() == 409 && attempt < max_retries - 1 {
+            // 409 Conflict = Scanner busy, retry
+            continue;
+        } else {
+            return Err(format!("Scan-Job erstellen fehlgeschlagen: {}", status).into());
+        }
     }
 
-    // Job-URL aus Location-Header
-    let job_url = response
-        .headers()
-        .get("Location")
-        .and_then(|v| v.to_str().ok())
-        .ok_or("Keine Job-URL erhalten")?
-        .to_string();
+    if job_url.is_empty() {
+        return Err("Scanner dauerhaft busy (409 Conflict nach max. Retries)".into());
+    }
 
     // 2. Auf Scan-Ergebnis warten
     let mut pages = Vec::new();
