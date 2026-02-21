@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod discovery;
+mod folder_watcher;
 mod pairing;
 mod scanner;
 mod scan_poller;
@@ -19,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use reqwest;
 
+use folder_watcher::{FolderSyncConfig, FolderSyncStatus, FolderWatcher, PostUploadAction};
 use scan_poller::ScanPoller;
 
 /// Bridge-Status für das Frontend
@@ -31,6 +33,8 @@ pub struct BridgeStatus {
     version: String,
     poller_active: bool,
     jobs_processed: u32,
+    folder_sync_active: bool,
+    folder_sync_path: Option<String>,
 }
 
 /// Globaler App-State
@@ -39,6 +43,7 @@ pub struct AppState {
     api_key: RwLock<Option<String>>,
     scanners: Arc<RwLock<Vec<discovery::DiscoveredScanner>>>,
     poller: RwLock<Option<Arc<ScanPoller>>>,
+    folder_watcher: RwLock<Option<Arc<FolderWatcher>>>,
 }
 
 impl Default for AppState {
@@ -52,10 +57,13 @@ impl Default for AppState {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 poller_active: false,
                 jobs_processed: 0,
+                folder_sync_active: false,
+                folder_sync_path: None,
             }),
             api_key: RwLock::new(None),
             scanners: Arc::new(RwLock::new(Vec::new())),
             poller: RwLock::new(None),
+            folder_watcher: RwLock::new(None),
         }
     }
 }
@@ -218,10 +226,27 @@ async fn disconnect(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String
         *poller_lock = None;
     }
 
+    // Folder-Watcher stoppen
+    {
+        let watcher_lock = state.folder_watcher.read().await;
+        if let Some(watcher) = watcher_lock.as_ref() {
+            watcher.stop().await;
+        }
+    }
+
+    {
+        let mut watcher_lock = state.folder_watcher.write().await;
+        *watcher_lock = None;
+    }
+
     let mut status = state.bridge_status.write().await;
     status.connected = false;
     status.docflow_url = None;
     status.poller_active = false;
+    status.folder_sync_active = false;
+    status.folder_sync_path = None;
+
+    drop(status);
 
     let mut api_key = state.api_key.write().await;
     *api_key = None;
@@ -233,9 +258,148 @@ async fn disconnect(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String
         }
     }
 
-    println!("✓ Verbindung getrennt, Poller gestoppt");
+    println!("✓ Verbindung getrennt, Poller & Folder-Sync gestoppt");
 
     Ok(())
+}
+
+/// Tauri-Befehl: Ordner-Sync konfigurieren und starten
+#[tauri::command]
+async fn configure_folder_sync(
+    state: tauri::State<'_, Arc<AppState>>,
+    watch_path: String,
+    post_action: String,
+) -> Result<bool, String> {
+    // Prüfe ob verbunden
+    let api_key = state.api_key.read().await.clone();
+    let docflow_url = state.bridge_status.read().await.docflow_url.clone();
+
+    let (key, url) = match (api_key, docflow_url) {
+        (Some(k), Some(u)) => (k, u),
+        _ => return Err("Nicht mit DocFlow verbunden".to_string()),
+    };
+
+    // Prüfe ob Ordner existiert
+    if !std::path::Path::new(&watch_path).exists() {
+        return Err(format!("Ordner existiert nicht: {}", watch_path));
+    }
+
+    // Bestehenden Watcher stoppen
+    {
+        let watcher_lock = state.folder_watcher.read().await;
+        if let Some(watcher) = watcher_lock.as_ref() {
+            watcher.stop().await;
+        }
+    }
+
+    let action = match post_action.as_str() {
+        "delete" => PostUploadAction::Delete,
+        "keep" => PostUploadAction::Keep,
+        _ => PostUploadAction::MoveToSubfolder,
+    };
+
+    let config = FolderSyncConfig {
+        enabled: true,
+        watch_path: watch_path.clone(),
+        post_upload_action: action,
+    };
+
+    // Config im Keyring speichern
+    if let Ok(entry) = keyring::Entry::new("docflow-scanner-bridge", "folder_sync_config") {
+        if let Ok(json) = serde_json::to_string(&config) {
+            let _ = entry.set_password(&json);
+        }
+    }
+
+    let watcher = Arc::new(FolderWatcher::new(config, key, url));
+
+    {
+        let mut watcher_lock = state.folder_watcher.write().await;
+        *watcher_lock = Some(watcher.clone());
+    }
+
+    // Watcher in separatem Task starten
+    let watcher_clone = watcher.clone();
+    tokio::spawn(async move {
+        watcher_clone.start_watching().await;
+    });
+
+    // Bridge-Status aktualisieren
+    {
+        let mut status = state.bridge_status.write().await;
+        status.folder_sync_active = true;
+        status.folder_sync_path = Some(watch_path);
+    }
+
+    println!("✓ Folder-Sync gestartet");
+    Ok(true)
+}
+
+/// Tauri-Befehl: Ordner-Sync stoppen
+#[tauri::command]
+async fn stop_folder_sync(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    {
+        let watcher_lock = state.folder_watcher.read().await;
+        if let Some(watcher) = watcher_lock.as_ref() {
+            watcher.stop().await;
+        }
+    }
+
+    {
+        let mut watcher_lock = state.folder_watcher.write().await;
+        *watcher_lock = None;
+    }
+
+    // Config im Keyring deaktivieren
+    if let Ok(entry) = keyring::Entry::new("docflow-scanner-bridge", "folder_sync_config") {
+        if let Ok(json_str) = entry.get_password() {
+            if let Ok(mut config) = serde_json::from_str::<FolderSyncConfig>(&json_str) {
+                config.enabled = false;
+                if let Ok(json) = serde_json::to_string(&config) {
+                    let _ = entry.set_password(&json);
+                }
+            }
+        }
+    }
+
+    {
+        let mut status = state.bridge_status.write().await;
+        status.folder_sync_active = false;
+        status.folder_sync_path = None;
+    }
+
+    println!("✓ Folder-Sync gestoppt");
+    Ok(())
+}
+
+/// Tauri-Befehl: Folder-Sync-Status abfragen
+#[tauri::command]
+async fn get_folder_sync_status(state: tauri::State<'_, Arc<AppState>>) -> Result<FolderSyncStatus, String> {
+    let watcher_lock = state.folder_watcher.read().await;
+    if let Some(watcher) = watcher_lock.as_ref() {
+        Ok(watcher.get_status().await)
+    } else {
+        Ok(FolderSyncStatus {
+            running: false,
+            watch_path: None,
+            files_uploaded: 0,
+            files_pending: 0,
+            errors: 0,
+            last_upload: None,
+            last_error: None,
+        })
+    }
+}
+
+/// Tauri-Befehl: Nativen Ordner-Dialog öffnen
+#[tauri::command]
+async fn pick_folder() -> Result<Option<String>, String> {
+    let folder = rfd::AsyncFileDialog::new()
+        .set_title("Scan-Ordner auswählen")
+        .pick_folder()
+        .await;
+
+    Ok(folder.map(|f| f.path().to_string_lossy().to_string()))
 }
 
 /// Prüft auf Updates und zeigt ggf. einen Dialog
@@ -407,6 +571,40 @@ fn main() {
                     }
 
                     println!("✓ Verbindung wiederhergestellt, Poller gestartet");
+
+                    // Folder-Sync Config laden und ggf. starten
+                    let folder_config_result = keyring::Entry::new("docflow-scanner-bridge", "folder_sync_config")
+                        .ok()
+                        .and_then(|e| e.get_password().ok())
+                        .and_then(|json| serde_json::from_str::<FolderSyncConfig>(&json).ok());
+
+                    if let Some(config) = folder_config_result {
+                        if config.enabled && std::path::Path::new(&config.watch_path).exists() {
+                            let watcher = Arc::new(FolderWatcher::new(
+                                config.clone(),
+                                key.clone(),
+                                url.clone(),
+                            ));
+
+                            {
+                                let mut watcher_lock = state_clone.folder_watcher.write().await;
+                                *watcher_lock = Some(watcher.clone());
+                            }
+
+                            let watcher_clone = watcher.clone();
+                            tokio::spawn(async move {
+                                watcher_clone.start_watching().await;
+                            });
+
+                            {
+                                let mut status = state_clone.bridge_status.write().await;
+                                status.folder_sync_active = true;
+                                status.folder_sync_path = Some(config.watch_path);
+                            }
+
+                            println!("✓ Folder-Sync wiederhergestellt");
+                        }
+                    }
                 }
             });
 
@@ -417,6 +615,10 @@ fn main() {
             discover_scanners,
             pair_with_docflow,
             disconnect,
+            configure_folder_sync,
+            stop_folder_sync,
+            get_folder_sync_status,
+            pick_folder,
         ])
         .run(tauri::generate_context!())
         .expect("Fehler beim Starten der Anwendung");

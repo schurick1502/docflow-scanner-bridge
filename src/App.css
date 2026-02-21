@@ -477,6 +477,113 @@ body {
   color: var(--text-muted);
 }
 
+/* Folder Sync */
+.folder-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.folder-picker input {
+  flex: 1;
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.radio-label input[type="radio"] {
+  accent-color: var(--primary);
+}
+
+.sync-controls {
+  margin-top: 16px;
+}
+
+.sync-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  margin-left: 6px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.sync-dot-large {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--success);
+  margin-right: 8px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.sync-status-card {
+  margin-top: 16px;
+}
+
+.sync-status-card h3 {
+  display: flex;
+  align-items: center;
+}
+
+.text-success {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.text-error {
+  color: var(--danger);
+}
+
+.sync-summary {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+}
+
+.sync-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-danger.btn-large {
+  width: 100%;
+  padding: 12px 24px;
+  font-size: 1rem;
+  background: var(--danger);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-danger.btn-large:hover {
+  background: #dc2626;
+}
+
 /* Animations */
 .spin {
   animation: spin 1s linear infinite;

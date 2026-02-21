@@ -1,6 +1,6 @@
 [package]
 name = "docflow-scanner-bridge"
-version = "1.5.0"
+version = "2.0.0"
 description = "DocFlow Scanner Bridge - Verbindet lokale Scanner mit DocFlow"
 authors = ["OneMillion Digital UG"]
 license = "MIT"
@@ -27,6 +27,10 @@ chrono = { version = "0.4", features = ["serde"] }
 keyring = "2.0"  # Sichere Speicherung von API-Keys
 base64 = "0.22"  # Base64 Encoding für Scan-Daten
 hostname = "0.4"  # Hostname ermitteln
+notify = { version = "6.1", features = ["macos_fsevent"] }  # Filesystem-Events für Folder-Sync
+sha2 = "0.10"     # SHA256-Hashing für Duplikat-Erkennung
+walkdir = "2.4"   # Rekursives Verzeichnis-Scannen
+rfd = "0.14"      # Native Datei/Ordner-Dialog
 
 # Plattform-spezifische Scanner-Zugriffe
 [target.'cfg(windows)'.dependencies]
