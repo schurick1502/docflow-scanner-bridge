@@ -547,6 +547,10 @@ fn main() {
                         status.docflow_url = Some(url.clone());
                     }
 
+                    // Klone für Folder-Watcher (key/url werden vom Poller per Move übernommen)
+                    let key_for_watcher = key.clone();
+                    let url_for_watcher = url.clone();
+
                     // Scan-Poller starten
                     let poller = Arc::new(ScanPoller::new(
                         key,
@@ -582,8 +586,8 @@ fn main() {
                         if config.enabled && std::path::Path::new(&config.watch_path).exists() {
                             let watcher = Arc::new(FolderWatcher::new(
                                 config.clone(),
-                                key.clone(),
-                                url.clone(),
+                                key_for_watcher.clone(),
+                                url_for_watcher.clone(),
                             ));
 
                             {

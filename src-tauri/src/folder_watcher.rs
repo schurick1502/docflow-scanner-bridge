@@ -137,16 +137,6 @@ impl FolderWatcher {
         };
 
         use reqwest::multipart::{Form, Part};
-        let file_part = Part::bytes(data)
-            .file_name(filename.clone())
-            .mime_str(mime_type)?;
-
-        let original_path = path.to_string_lossy().to_string();
-
-        let form = Form::new()
-            .part("file", file_part)
-            .text("file_hash", file_hash.to_string())
-            .text("original_path", original_path);
 
         // Retry-Logik: 3 Versuche mit exponentiellem Backoff
         let mut last_error = String::new();
